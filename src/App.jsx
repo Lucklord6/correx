@@ -32,8 +32,43 @@ export default function App() {
   const [secs, setSecs] = useState(0)
   const [completedToday, setCompletedToday] = useState(false)
   const [streak, setStreak] = useState(12)
+  const [soundOn, setSoundOn] = useState(true)
   const timerRef = useRef(null)
   const vibrateRef = useRef(null)
+  const audioCtx = useRef(null)
+
+  // Audio - initialize on first tap (required for iOS)
+  const initAudio = () => {
+    if (!audioCtx.current) {
+      audioCtx.current = new (window.AudioContext || window.webkitAudioContext)()
+    }
+    if (audioCtx.current.state === 'suspended') audioCtx.current.resume()
+  }
+
+  const playTone = (freq, duration, type='sine', vol=0.3) => {
+    if (!soundOn || !audioCtx.current) return
+    try {
+      const ctx = audioCtx.current
+      if (ctx.state === 'suspended') ctx.resume()
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = type
+      osc.frequency.value = freq
+      gain.gain.setValueAtTime(vol, ctx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(ctx.currentTime)
+      osc.stop(ctx.currentTime + duration)
+    } catch(e) {}
+  }
+
+  // Sound effects
+  const beepTick = () => playTone(800, 0.08, 'sine', 0.15)        // prep countdown tick
+  const beepGo = () => { playTone(1200, 0.15); setTimeout(()=>playTone(1600, 0.2), 150) }  // GO! double beep
+  const beepWarning = () => playTone(600, 0.12, 'triangle', 0.2)   // 5s warning
+  const beepRest = () => playTone(500, 0.3, 'sine', 0.2)          // rest starts
+  const beepDone = () => { playTone(800, 0.15); setTimeout(()=>playTone(1000, 0.15), 150); setTimeout(()=>playTone(1200, 0.3), 300) }  // exercise/routine done
 
   const ex = exercises[exIdx]
   const isHold = !!ex?.hold
@@ -45,10 +80,16 @@ export default function App() {
     if (phase === 'prep' || phase === 'active' || phase === 'rest') {
       timerRef.current = setInterval(() => {
         setSecs(s => {
+          // Sound triggers
+          if (phase === 'prep' && s > 1) beepTick()
+          if ((phase === 'active' || phase === 'rest') && s === 6) beepWarning()
+          if ((phase === 'active' || phase === 'rest') && s <= 4 && s > 1) beepTick()
+
           if (s <= 1) {
             clearInterval(timerRef.current)
             if (navigator.vibrate) navigator.vibrate([100,50,100])
             if (phase === 'prep') {
+              beepGo()
               if (isHold) {
                 setPhase('active')
                 setSecs(ex.hold)
@@ -57,12 +98,13 @@ export default function App() {
                 setSecs(0)
               }
             } else if (phase === 'active') {
+              beepDone()
               if (setNum < totalSets) {
-                if (ex.rest > 0) { setPhase('rest'); setSecs(ex.rest) }
+                if (ex.rest > 0) { beepRest(); setPhase('rest'); setSecs(ex.rest) }
                 else { setSetNum(n=>n+1); setPhase('prep'); setSecs(5) }
               } else {
                 if (exIdx < exercises.length - 1) {
-                  if (ex.rest > 0) { setPhase('rest'); setSecs(ex.rest) }
+                  if (ex.rest > 0) { beepRest(); setPhase('rest'); setSecs(ex.rest) }
                   else { nextExercise() }
                 } else {
                   setPhase('done')
@@ -70,6 +112,7 @@ export default function App() {
                 }
               }
             } else if (phase === 'rest') {
+              beepGo()
               if (setNum < totalSets) {
                 setSetNum(n=>n+1); setPhase('prep'); setSecs(5)
               } else {
@@ -98,6 +141,7 @@ export default function App() {
   }
 
   const startRoutine = () => {
+    initAudio()
     setExIdx(0); setSetNum(1); setPhase('prep'); setSecs(5); setScreen('player')
   }
 
@@ -171,7 +215,13 @@ export default function App() {
           {/* Top */}
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
             <div onClick={goHome} className="glass" style={{width:34,height:34,borderRadius:11,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
-            <div style={{display:'flex',alignItems:'baseline',gap:3}}><span style={{fontSize:26,fontWeight:900,color:'#fff',fontFamily:'var(--mono)'}}>{exIdx+1}</span><span style={{fontSize:12,color:'#2A2A2A',fontWeight:600}}>/10</span></div>
+            <div style={{display:'flex',alignItems:'center',gap:12}}>
+              <div onClick={()=>setSoundOn(s=>!s)} className="glass" style={{width:28,height:28,borderRadius:9,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',opacity:soundOn?1:0.4}}>
+                {soundOn ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+                : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>}
+              </div>
+              <div style={{display:'flex',alignItems:'baseline',gap:3}}><span style={{fontSize:26,fontWeight:900,color:'#fff',fontFamily:'var(--mono)'}}>{exIdx+1}</span><span style={{fontSize:12,color:'#2A2A2A',fontWeight:600}}>/10</span></div>
+            </div>
             <div onClick={()=>{clearInterval(timerRef.current);nextExercise()}} className="glass" style={{width:34,height:34,borderRadius:11,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="2.5"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg></div>
           </div>
 
